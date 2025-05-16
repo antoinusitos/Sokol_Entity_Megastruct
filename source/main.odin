@@ -33,6 +33,7 @@ main :: proc() {
 		init_cb = init,
 		frame_cb = frame,
 		cleanup_cb = cleanup,
+		event_cb = event,
 		width = window_w,
 		height = window_h,
 		window_title = "epic hot sauce",
@@ -126,6 +127,8 @@ init_entities :: proc () {
 	entity_create(.player)
 	crawler : ^Entity = entity_create(.crawler)
 	crawler.position = v2{-50, 50}
+	player = entity_create(.tile)
+	player.position = v2{50, 50}
 }
 
 //
@@ -136,8 +139,8 @@ frame :: proc "c" () {
 	
 	memset(&draw_frame, 0, size_of(draw_frame)) // @speed, we probs don't want to reset this whole thing
 	
-	update(f64(t.now()._nsec - last_frame_time._nsec) / 1000)
-	last_frame_time = t.now()
+	delta_time : f64 = sapp.frame_duration()
+	update(delta_time)
 	render()
 	
 	app_state.bind.images[IMG_tex0] = atlas.sg_image
@@ -158,6 +161,26 @@ frame :: proc "c" () {
 cleanup :: proc "c" () {
 	context = runtime.default_context()
 	sg.shutdown()
+}
+
+event :: proc "c" (a0: ^sapp.Event) {
+	context = runtime.default_context()
+	if (a0.type == .KEY_DOWN) {
+        #partial switch (a0.key_code) {
+            case .W:
+				player.position.y = player.position.y + 100 * f32(sapp.frame_duration())
+				break
+			case .S:
+				player.position.y = player.position.y - 100 * f32(sapp.frame_duration())
+				break
+			case .D:
+				player.position.x = player.position.x + 100 * f32(sapp.frame_duration())
+				break
+			case .A:
+				player.position.x = player.position.x - 100 * f32(sapp.frame_duration())
+				break
+		}
+    }
 }
 
 //
@@ -235,10 +258,15 @@ sine_breathe :: proc(p: $T) -> T where intrinsics.type_is_float(T) {
 //
 // API ordered highest -> lowest level
 
-draw_sprite :: proc(pos: Vector2, img_id: Image_Id, pivot:= Pivot.bottom_left, xform := Matrix4(1), color_override:= v4{0,0,0,0}) {
+draw_sprite :: proc(pos: Vector2, img_id: Image_Id, pivot:= Pivot.bottom_left, xform := Matrix4(1), color_override:= v4{0,0,0,0}, size_override := Vector2{0, 0}) {
 	image := images[img_id]
 	size := v2{auto_cast image.width, auto_cast image.height}
 	
+	if(size_override != Vector2{0, 0})
+	{
+		size = v2{auto_cast size_override.x, auto_cast size_override.y}
+	}
+
 	xform0 := Matrix4(1)
 	xform0 *= xform_translate(pos)
 	xform0 *= xform // we slide in here because rotations + scales work nicely at this point
@@ -378,6 +406,7 @@ Image_Id :: enum {
 	nil,
 	player,
 	crawler,
+	playertile,
 }
 
 Image :: struct {
@@ -405,6 +434,7 @@ init_images :: proc() {
 		
 		path := tprint(img_dir, img_name, ".png", sep="")
 		png_data, succ := os.read_entire_file(path)
+		fmt.printfln("on image id: %v", img_name)
 		assert(succ)
 		
 		stbi.set_flip_vertically_on_load(1)
@@ -645,10 +675,13 @@ Game_State :: struct {
 	player_handle: Entity_Handle,
 }
 
+player: ^Entity
+
 Entity_Kind :: enum {
 	nil,
 	player,
 	crawler,
+	tile,
 }
 
 Entity :: struct {
@@ -730,11 +763,11 @@ entity_create :: proc(kind: Entity_Kind) -> ^Entity {
 
 	new_entity.rotation = Matrix4(1)
 
-	// todo uncomment
 	switch kind {
 		case .nil: break
 		case .player: setup_player(new_entity)
 		case .crawler: setup_crawler(new_entity)
+		case .tile: setup_tile(new_entity)
 	}
 
 	return new_entity
@@ -849,6 +882,22 @@ setup_crawler :: proc(entity: ^Entity) {
 
 	entity.draw = proc(entity: ^Entity) {
 		default_draw_based_on_entity_data(entity)
+	}
+}
+
+setup_tile :: proc(entity: ^Entity) {
+	entity.kind = .tile
+	entity.has_physics = true
+
+	entity.icon_image = .playertile;
+
+	// update function is also nice and localised here
+	entity.update = proc(entity: ^Entity) {
+		entity.health = entity.max_health
+	}
+
+	entity.draw = proc(entity: ^Entity) {
+		draw_sprite(entity.position, entity.icon_image, xform=entity.rotation, pivot=.bottom_center)
 	}
 }
 
